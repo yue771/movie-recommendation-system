@@ -1,69 +1,94 @@
 # movie-recommendation-system
-# 🎬 Movie Recommendation System
+# 🎬 Hybrid Movie Recommendation System
+
+This project builds a **movie recommendation system** using three approaches:
+
+- Collaborative Filtering
+- Content-Based Recommendation
+- Hybrid Recommendation (combined model)
+
+The goal is to compare different recommendation strategies and improve recommendation quality by combining multiple methods.
+
+---
 
 ## 📌 Project Overview
 
-This project builds a movie recommendation system using collaborative filtering based on user rating data.
+Recommendation systems are widely used in platforms like Netflix, Amazon, and Spotify.
 
-It recommends similar movies by analyzing user behavior patterns using cosine similarity.
+In this project, we:
 
----
-
-## 📊 Dataset
-
-- MovieLens (ratings_small.csv)
-- TMDB metadata (movies_metadata.csv)
-- Mapping file (links_small.csv)
+- analyze movie rating data
+- build similarity-based recommendation models
+- combine different recommendation approaches into a hybrid system
 
 ---
 
-## ⚙️ Methodology
+## 📂 Dataset
 
-1. Data cleaning and preprocessing
-2. ID mapping across datasets (MovieLens → TMDB)
-3. Constructing user-movie matrix
-4. Filtering popular movies (≥ 20 ratings)
-5. Computing cosine similarity
-6. Generating recommendations
+- MovieLens dataset (user ratings)
+- Movie metadata (genres, overview)
 
 ---
 
-## 🎯 Example
+## ⚙️ Methods
 
-Input:
-Toy Story
-Output:
-Toy Story 2
-Star Wars
-Forrest Gump
-Jurassic Park
-...
+### 1. Collaborative Filtering
+
+- Construct user-movie rating matrix
+- Compute cosine similarity between movies
+- Recommend movies based on similar user behavior
 
 ---
 
-## 📈 Key Results
+### 2. Content-Based Recommendation
 
-- Captures user preference patterns effectively
-- Produces meaningful recommendations for popular movies
-- Simple and interpretable baseline model
-
----
-
-## ⚠️ Limitations
-
-- Cold start problem (new users/movies)
-- No content-based features
-- Depends heavily on rating density
+- Use TF-IDF on movie genres / descriptions
+- Compute cosine similarity between movies
+- Recommend movies based on content similarity
 
 ---
 
-## 🚀 Future Work
+### 3. Hybrid Recommendation
 
-- Hybrid recommendation system
-- Matrix factorization (SVD)
-- Deploy with Streamlit
+We combine both methods:
+
+**Hybrid Score = α × Collaborative + (1 - α) × Content**
+
+- α controls the weight of each model
+- allows flexible recommendation strategies
 
 ---
+
+## 📊 Results
+
+We tested different values of α:
+
+- α = 0.2 → more content-based
+- α = 0.5 → balanced
+- α = 0.8 → more collaborative
+
+Hybrid recommendation provides more robust and flexible results.
+
+---
+
+## 🚀 Project Highlights
+
+- Built collaborative filtering recommender from scratch
+- Implemented TF-IDF based content recommender
+- Designed hybrid recommendation model
+- Compared multiple recommendation strategies
+- Structured project as a portfolio-ready notebook
+
+---
+
+## 🧠 Key Takeaways
+
+- Collaborative filtering captures user behavior patterns
+- Content-based recommendation captures semantic similarity
+- Hybrid model improves recommendation quality and flexibility
+
+---
+
 
 ## 🛠️ Tech Stack
 
@@ -73,6 +98,17 @@ Jurassic Park
 - Matplotlib
 import kagglehub
 
+---
+
 ## 🛠️ Download latest version-Dataset
+
 path = kagglehub.dataset_download("rounakbanik/the-movies-dataset")
 print("Path to dataset files:", path)
+
+---
+
+## 📬 Future Improvements
+
+- Add deep learning models (e.g., Neural CF)
+- Deploy as a web app (Streamlit)
+- Introduce ranking optimization
