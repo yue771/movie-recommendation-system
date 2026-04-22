@@ -1,182 +1,226 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.feature_extraction.text import TfidfVectorizer
 import ast
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-st.set_page_config(page_title="Hybrid Movie Recommender", layout="wide")
+st.set_page_config(page_title="Movie Recommendation System", layout="wide")
 
-st.title("🎬 Hybrid Movie Recommendation System")
-st.write("A movie recommender built with collaborative filtering, content-based filtering, and hybrid recommendation.")
+st.title("🎬 Movie Recommendation System")
+st.markdown("A simple hybrid-style movie recommendation demo based on collaborative filtering and content-based filtering.")
 
 # =========================
 # 1. Load data
 # =========================
 @st.cache_data
 def load_data():
-    links = pd.read_csv('/kaggle/input/datasets/rounakbanik/the-movies-dataset/links_small.csv')
-    movies = pd.read_csv('/kaggle/input/datasets/rounakbanik/the-movies-dataset/movies_metadata.csv')
-    ratings = pd.read_csv('/kaggle/input/datasets/rounakbanik/the-movies-dataset/ratings_small.csv')
+    movies = pd.read_csv("movies_small.csv")
+    ratings = pd.read_csv("ratings_small.csv")
+    links = pd.read_csv("links_small.csv")
+    return movies, ratings, links
 
-    movies = movies[['id', 'title', 'genres', 'overview']].copy()
-    movies['id'] = pd.to_numeric(movies['id'], errors='coerce')
-    movies = movies.dropna(subset=['id'])
-    movies['id'] = movies['id'].astype(int)
-    movies['overview'] = movies['overview'].fillna('')
-    movies = movies.drop_duplicates(subset='id')
-
-    links = links[['movieId', 'tmdbId']].copy()
-    links['tmdbId'] = pd.to_numeric(links['tmdbId'], errors='coerce')
-    links = links.dropna(subset=['tmdbId'])
-    links['tmdbId'] = links['tmdbId'].astype(int)
-
-    return links, movies, ratings
-
-
-links, movies_full, ratings = load_data()
+movies, ratings, links = load_data()
 
 # =========================
-# 2. Build collaborative part
+# 2. Prepare content-based data
 # =========================
 @st.cache_data
-def build_collaborative_model(links, movies_full, ratings):
-    ratings_links = ratings.merge(links, on='movieId', how='inner')
-    df_cf = ratings_links.merge(movies_full, left_on='tmdbId', right_on='id', how='inner')
-    df_cf = df_cf[['userId', 'movieId', 'rating', 'title']]
+def prepare_content_data(movies_df):
+    movies_df = movies_df.copy()
 
-    user_movie_matrix = df_cf.pivot_table(
-        index='userId',
-        columns='title',
-        values='rating'
+    movies_df["overview"] = movies_df["overview"].fillna("")
+    movies_df["genres"] = movies_df["genres"].fillna("")
+
+    def parse_genres(x):
+        try:
+            genres_list = ast.literal_eval(x)
+            return " ".join([i["name"] for i in genres_list])
+        except:
+            return ""
+
+    movies_df["genres_text"] = movies_df["genres"].apply(parse_genres)
+    movies_df["content"] = movies_df["genres_text"] + " " + movies_df["overview"]
+
+    tfidf = TfidfVectorizer(stop_words="english", max_features=5000)
+    tfidf_matrix = tfidf.fit_transform(movies_df["content"])
+
+    content_similarity = cosine_similarity(tfidf_matrix, tfidf_matrix)
+
+    content_similarity_df = pd.DataFrame(
+        content_similarity,
+        index=movies_df["title"],
+        columns=movies_df["title"]
     )
 
-    movie_rating_counts = df_cf['title'].value_counts()
+    return movies_df, content_similarity_df
+
+movies_content, content_similarity_df = prepare_content_data(movies)
+
+# =========================
+# 3. Prepare collaborative filtering data
+# =========================
+@st.cache_data
+def prepare_cf_data(ratings_df, movies_df):
+    # 这里只保留 title 和一个 movieId 映射
+    if "id" in movies_df.columns:
+        movie_map = movies_df[["id", "title"]].copy()
+        movie_map["id"] = pd.to_numeric(movie_map["id"], errors="coerce")
+        movie_map = movie_map.dropna(subset=["id"])
+        movie_map["id"] = movie_map["id"].astype(int)
+        movie_map = movie_map.drop_duplicates(subset=["id"])
+    else:
+        movie_map = movies_df[["title"]].copy()
+        movie_map["id"] = range(len(movie_map))
+
+    # links_small 里 movieId -> tmdbId
+    links_df = links_df = links.copy()
+    links_df["tmdbId"] = pd.to_numeric(links_df["tmdbId"], errors="coerce")
+    links_df = links_df.dropna(subset=["tmdbId"])
+    links_df["tmdbId"] = links_df["tmdbId"].astype(int)
+
+    ratings_links = ratings_df.merge(links_df[["movieId", "tmdbId"]], on="movieId", how="inner")
+    df = ratings_links.merge(movie_map, left_on="tmdbId", right_on="id", how="inner")
+
+    df = df[["userId", "movieId", "rating", "title"]].copy()
+
+    user_movie_matrix = df.pivot_table(
+        index="userId",
+        columns="title",
+        values="rating"
+    )
+
+    movie_rating_counts = df["title"].value_counts()
     popular_movies = movie_rating_counts[movie_rating_counts >= 20].index
 
     filtered_matrix = user_movie_matrix[popular_movies]
     movie_user_matrix = filtered_matrix.T.fillna(0)
 
     movie_similarity = cosine_similarity(movie_user_matrix)
+
     movie_similarity_df = pd.DataFrame(
         movie_similarity,
         index=movie_user_matrix.index,
         columns=movie_user_matrix.index
     )
 
-    return df_cf, movie_similarity_df
+    return df, movie_similarity_df, movie_rating_counts
 
-
-df_cf, movie_similarity_df = build_collaborative_model(links, movies_full, ratings)
-
-# =========================
-# 3. Build content part
-# =========================
-def parse_genres(x):
-    try:
-        genres_list = ast.literal_eval(x)
-        return ' '.join([i['name'] for i in genres_list])
-    except:
-        return ''
-
-@st.cache_data
-def build_content_model(movies_full):
-    movies_cb = movies_full[['id', 'title', 'genres', 'overview']].copy()
-    movies_cb['genres_text'] = movies_cb['genres'].apply(parse_genres)
-    movies_cb['content'] = movies_cb['genres_text'] + ' ' + movies_cb['overview']
-
-    tfidf = TfidfVectorizer(stop_words='english', max_features=5000)
-    tfidf_matrix = tfidf.fit_transform(movies_cb['content'])
-
-    content_similarity = cosine_similarity(tfidf_matrix, tfidf_matrix)
-    content_similarity_df = pd.DataFrame(
-        content_similarity,
-        index=movies_cb['title'],
-        columns=movies_cb['title']
-    )
-
-    return movies_cb, content_similarity_df
-
-
-movies_cb, content_similarity_df = build_content_model(movies_full)
+cf_df, movie_similarity_df, movie_rating_counts = prepare_cf_data(ratings, movies)
 
 # =========================
 # 4. Recommendation functions
 # =========================
-def recommend_movies(movie_title, top_n=10):
-    if movie_title not in movie_similarity_df.columns:
-        return pd.DataFrame(columns=['Movie', 'Collaborative Score'])
-
-    sim_scores = movie_similarity_df[movie_title].sort_values(ascending=False)[1:top_n+1]
-    return pd.DataFrame({
-        'Movie': sim_scores.index,
-        'Collaborative Score': sim_scores.values
-    })
-
 def recommend_by_content(movie_title, top_n=10):
     if movie_title not in content_similarity_df.columns:
-        return pd.DataFrame(columns=['Movie', 'Content Score'])
+        return pd.DataFrame(columns=["Movie", "Content Score"])
 
     sim_scores = content_similarity_df[movie_title].sort_values(ascending=False)[1:top_n+1]
-    return pd.DataFrame({
-        'Movie': sim_scores.index,
-        'Content Score': sim_scores.values
+
+    recommendations = pd.DataFrame({
+        "Movie": sim_scores.index,
+        "Content Score": sim_scores.values
     })
+    return recommendations
+
+
+def recommend_by_collaborative(movie_title, top_n=10):
+    if movie_title not in movie_similarity_df.columns:
+        return pd.DataFrame(columns=["Movie", "Collaborative Score"])
+
+    sim_scores = movie_similarity_df[movie_title].sort_values(ascending=False)[1:top_n+1]
+
+    recommendations = pd.DataFrame({
+        "Movie": sim_scores.index,
+        "Collaborative Score": sim_scores.values
+    })
+    return recommendations
+
 
 def recommend_hybrid(movie_title, top_n=10, alpha=0.5):
-    cf_df = recommend_movies(movie_title, top_n=50)
-    cb_df = recommend_by_content(movie_title, top_n=50)
+    cf_rec = recommend_by_collaborative(movie_title, top_n=50)
+    content_rec = recommend_by_content(movie_title, top_n=50)
 
-    if cf_df.empty and cb_df.empty:
-        return pd.DataFrame(columns=['Movie', 'Collaborative Score', 'Content Score', 'Hybrid Score'])
+    if cf_rec.empty and content_rec.empty:
+        return pd.DataFrame(columns=["Movie", "Collaborative Score", "Content Score", "Hybrid Score"])
 
-    merged = pd.merge(cf_df, cb_df, on='Movie', how='outer').fillna(0)
-    merged['Hybrid Score'] = alpha * merged['Collaborative Score'] + (1 - alpha) * merged['Content Score']
-    merged = merged.sort_values(by='Hybrid Score', ascending=False).head(top_n)
+    merged = pd.merge(cf_rec, content_rec, on="Movie", how="outer").fillna(0)
 
+    merged["Hybrid Score"] = (
+        alpha * merged["Collaborative Score"] +
+        (1 - alpha) * merged["Content Score"]
+    )
+
+    merged = merged.sort_values("Hybrid Score", ascending=False).head(top_n).reset_index(drop=True)
     return merged
 
+
 # =========================
-# 5. UI
+# 5. Sidebar
 # =========================
 st.sidebar.header("⚙️ Settings")
 
-movie_list = sorted(list(set(movies_cb['title'].dropna())))
-selected_movie = st.sidebar.selectbox("Choose a movie", movie_list)
+available_movies = sorted(list(set(movies_content["title"]).intersection(set(movie_similarity_df.columns))))
 
-method = st.sidebar.radio(
-    "Recommendation Method",
-    ["Collaborative Filtering", "Content-Based", "Hybrid"]
+selected_movie = st.sidebar.selectbox("Choose a movie", available_movies)
+top_n = st.sidebar.slider("Number of recommendations", 5, 20, 10)
+alpha = st.sidebar.slider("Hybrid weight (Collaborative)", 0.0, 1.0, 0.5, 0.1)
+
+recommendation_type = st.sidebar.radio(
+    "Recommendation mode",
+    ["Hybrid", "Collaborative", "Content-Based"]
 )
 
-top_n = st.sidebar.slider("Top N Recommendations", min_value=5, max_value=20, value=10)
-
-alpha = 0.5
-if method == "Hybrid":
-    alpha = st.sidebar.slider("Alpha (Collaborative Weight)", min_value=0.0, max_value=1.0, value=0.5, step=0.1)
-
+# =========================
+# 6. Main display
+# =========================
 st.subheader(f"Selected Movie: {selected_movie}")
-st.write(f"Method: **{method}**")
 
-if st.button("Get Recommendations"):
-    if method == "Collaborative Filtering":
-        result = recommend_movies(selected_movie, top_n=top_n)
-        st.dataframe(result, use_container_width=True)
+col1, col2 = st.columns(2)
 
-    elif method == "Content-Based":
-        result = recommend_by_content(selected_movie, top_n=top_n)
-        st.dataframe(result, use_container_width=True)
+with col1:
+    st.markdown("### Movie Info")
+    movie_row = movies_content[movies_content["title"] == selected_movie]
+    if not movie_row.empty:
+        overview = movie_row.iloc[0]["overview"]
+        genres_text = movie_row.iloc[0]["genres_text"]
+        st.write(f"**Genres:** {genres_text if genres_text else 'N/A'}")
+        st.write(f"**Overview:** {overview if overview else 'No overview available.'}")
 
-    else:
-        result = recommend_hybrid(selected_movie, top_n=top_n, alpha=alpha)
-        st.dataframe(result, use_container_width=True)
+with col2:
+    st.markdown("### Dataset Info")
+    st.write(f"**Movies in content dataset:** {movies_content.shape[0]}")
+    st.write(f"**Ratings records:** {ratings.shape[0]}")
+    st.write(f"**Movies available for collaborative filtering:** {len(movie_similarity_df.columns)}")
 
 st.markdown("---")
-st.markdown("### 📌 About This App")
-st.write("""
-This app demonstrates three movie recommendation strategies:
+st.markdown("## 🔍 Recommendations")
 
-- Collaborative Filtering
-- Content-Based Recommendation
-- Hybrid Recommendation
-""")
+if recommendation_type == "Hybrid":
+    result = recommend_hybrid(selected_movie, top_n=top_n, alpha=alpha)
+elif recommendation_type == "Collaborative":
+    result = recommend_by_collaborative(selected_movie, top_n=top_n)
+else:
+    result = recommend_by_content(selected_movie, top_n=top_n)
+
+if result.empty:
+    st.warning("No recommendations found for this movie.")
+else:
+    st.dataframe(result, use_container_width=True)
+
+    csv = result.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="📥 Download recommendations as CSV",
+        data=csv,
+        file_name=f"{selected_movie}_recommendations.csv",
+        mime="text/csv"
+    )
+
+st.markdown("---")
+st.markdown("### 📌 About this app")
+st.markdown(
+    """
+- **Collaborative Filtering**: recommends movies liked by users with similar rating behavior.
+- **Content-Based Filtering**: recommends movies with similar genres and descriptions.
+- **Hybrid Recommendation**: combines both approaches using a weighted score.
+"""
+)
