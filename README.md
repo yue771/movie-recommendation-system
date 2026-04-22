@@ -71,3 +71,8 @@ Jurassic Park
 - Pandas
 - Scikit-learn
 - Matplotlib
+import kagglehub
+
+## 🛠️ Download latest version-Dataset
+path = kagglehub.dataset_download("rounakbanik/the-movies-dataset")
+print("Path to dataset files:", path)
